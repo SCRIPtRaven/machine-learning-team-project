@@ -100,23 +100,11 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
     high_count = 0
     valid_count = 0
 
-    default_setpoint1 = 0.5
-    default_setpoint2 = 0.5
-    default_weight_v1 = 0.5
-    default_weight_v2 = 0.5
-    default_weight_combined = 0.5
-
     if params is not None and not use_rl:
-        kp1, ki1, kd1, setpoint1, setpoint2, weight_v1, weight_v2, weight_combined, kp2, ki2, kd2 = params[:11]
-        primary_pid_controller = PIDController(kp1, ki1, kd1, setpoint1, setpoint2, weight_v1, weight_v2,
-                                               weight_combined)
-        secondary_pid_controller = PIDController(kp2, ki2, kd2, setpoint1, setpoint2, weight_v1, weight_v2,
-                                                 weight_combined)
+        kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2 = params
+        pid_controller = PIDController(kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2)
     else:
-        primary_pid_controller = PIDController(1.0, 0.1, 0.05, default_setpoint1, default_setpoint2, default_weight_v1,
-                                               default_weight_v2, default_weight_combined)
-        secondary_pid_controller = PIDController(1.0, 0.1, 0.05, default_setpoint1, default_setpoint2,
-                                                 default_weight_v1, default_weight_v2, default_weight_combined)
+        pid_controller = PIDController(1.0, 0.1, 0.05, 0.5, 0.5, 0.5, 0.5)
 
     for i in range(1, np.size(ttt)):
         t = ttt[i]
@@ -125,9 +113,7 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
             action = rl_model.select_action(state)
             q1t_value = max(0, min(1, action[0]))
         else:
-            intermediate_setpoint = primary_pid_controller.compute(V[0, i - 1], V[1, i - 1], r_values[i - 1])
-            q1t_value = secondary_pid_controller.compute(V[0, i - 1], V[1, i - 1], r_values[i - 1],
-                                                         intermediate_setpoint)
+            q1t_value = pid_controller.compute(V[0, i - 1], V[1, i - 1])
 
         q1_values[i] = q1t_value
         rt_value = rt_func(t, r_values[i - 1])
@@ -160,7 +146,7 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
         print(f"Close to overflow volumes: {high_count}")
         print(f"Invalid volumes: {invalid_count}")
 
-        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
         # Plot for reservoir volumes
         ax1.plot(ttt, V[0, :], 'b-', label="1st reservoir")
@@ -201,15 +187,21 @@ def main():
 
     if mode == "optimize":
         from optimization import genetic_algorithm  # Import here to avoid circular dependency
-        best_params = genetic_algorithm(num_generations=50, population_size=300)
-        np.save("best_params.npy", best_params)
+        best_params_normal = genetic_algorithm(num_generations=50, population_size=300, scenario="normal")
+        np.save("best_params_normal.npy", best_params_normal)
+        best_params_drought = genetic_algorithm(num_generations=50, population_size=300, scenario="drought")
+        np.save("best_params_drought.npy", best_params_drought)
+        best_params_rainy = genetic_algorithm(num_generations=50, population_size=300, scenario="rainy")
+        np.save("best_params_rainy.npy", best_params_rainy)
     elif mode == "test":
         test_mode = input("Enter 'pid' for PID controller testing or 'rl' for RL agent testing: ").strip().lower()
         if test_mode == "pid":
-            best_params = np.load("best_params.npy")
-            run_simulation(Q_normal, r_normal, "Normal Weather", params=best_params)
-            run_simulation(Q_drought, r_drought, "Drought Weather", params=best_params)
-            run_simulation(Q_rainy, r_rainy, "Rainy Weather", params=best_params)
+            best_params_normal = np.load("best_params_normal.npy")
+            best_params_drought = np.load("best_params_drought.npy")
+            best_params_rainy = np.load("best_params_rainy.npy")
+            run_simulation(Q_normal, r_normal, "Normal Weather", params=best_params_normal)
+            run_simulation(Q_drought, r_drought, "Drought Weather", params=best_params_drought)
+            run_simulation(Q_rainy, r_rainy, "Rainy Weather", params=best_params_rainy)
         elif test_mode == "rl":
             from rl import ActorCriticAgent
             agent = ActorCriticAgent(state_dim, action_dim, max_action)
