@@ -107,7 +107,6 @@ class ActorCriticAgent:
 
         current_Q = self.critic(state, action)
 
-        # Ensure target_Q and current_Q have the same shape
         target_Q = target_Q.view(-1, 1)
         current_Q = current_Q.view(-1, 1)
 
@@ -131,11 +130,11 @@ class ActorCriticAgent:
 
 
 def train_actor_critic_agent(agent, Qt_func, rt_func, episodes=1000, T=100, dt=0.1):
-    cumulative_rewards = []  # List to store cumulative rewards for each episode
+    cumulative_rewards = []
     pt = tqdm(range(episodes), unit="episode")
 
     for episode in pt:
-        V = np.array([0.5, 0.5])  # Initial state
+        V = np.array([0.5, 0.5])
         minallowed = 0.1
         maxallowed = 0.9
         target_v1 = 0.5
@@ -144,14 +143,14 @@ def train_actor_critic_agent(agent, Qt_func, rt_func, episodes=1000, T=100, dt=0
         r_values = np.zeros_like(ttt)
         r_values[0] = rt_func(0, 0)
 
-        episode_reward = 0  # Initialize cumulative reward for the episode
-        prev_q1t_value = 0  # Initialize previous q1 value for penalizing large changes
+        episode_reward = 0
+        prev_q1t_value = 0
 
         for i in range(1, np.size(ttt)):
             t = ttt[i]
             state = np.array([V[0], V[1], r_values[i - 1]])
             action = agent.select_action(state)
-            q1t_value = max(0, action[0])  # Ensure q1 is non-negative
+            q1t_value = max(0, action[0])
             rt_value = rt_func(t, r_values[i - 1])
             r_values[i] = rt_value
             q2t_value = q2t(t, V[1])
@@ -164,13 +163,13 @@ def train_actor_critic_agent(agent, Qt_func, rt_func, episodes=1000, T=100, dt=0
 
             # Apply penalties based on volume bounds
             if V[0] < minallowed or V[0] > maxallowed or V[1] < minallowed or V[1] > maxallowed:
-                reward -= 0.5  # Reduced penalty for invalid volumes
+                reward -= 0.5
 
             # Penalize large changes in q1
-            reward -= 0.1 * abs(q1t_value - prev_q1t_value)  # Reduced penalty for large changes in q1
+            reward -= 0.1 * abs(q1t_value - prev_q1t_value)
 
-            episode_reward += reward  # Accumulate reward
-            prev_q1t_value = q1t_value  # Update previous q1 value
+            episode_reward += reward
+            prev_q1t_value = q1t_value
 
             next_state = np.array([V[0], V[1], r_values[i]])
             done = 1 if i == np.size(ttt) - 1 else 0
@@ -179,7 +178,7 @@ def train_actor_critic_agent(agent, Qt_func, rt_func, episodes=1000, T=100, dt=0
             if len(agent.replay_buffer.storage) > 1000:
                 agent.train()
 
-        cumulative_rewards.append(episode_reward)  # Store cumulative reward for the episode
+        cumulative_rewards.append(episode_reward)
         pt.set_description(
             f"Cumulative reward: {round(sum(cumulative_rewards) / (episode + 1), 2)} | Current reward: {round(episode_reward, 2)}")
 
