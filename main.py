@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.patches import Rectangle
+
 from pid import PIDController
 
 rng = np.random.default_rng(123)
@@ -202,8 +203,8 @@ def main():
 
     if mode == "optimize":
         from optimization import genetic_algorithm  # Import here to avoid circular dependency
-        # best_params_drought = genetic_algorithm(num_generations=15, population_size=500, scenario="drought")
-        # np.save("best_params_drought.npy", best_params_drought)
+        best_params_drought = genetic_algorithm(num_generations=15, population_size=500, scenario="drought")
+        np.save("best_params_drought.npy", best_params_drought)
         best_params_normal = genetic_algorithm(num_generations=50, population_size=1000, scenario="normal")
         np.save("best_params_normal.npy", best_params_normal)
         best_params_rainy = genetic_algorithm(num_generations=50, population_size=1000, scenario="rainy")
@@ -228,9 +229,22 @@ def main():
     elif mode == "learn":
         from rl import ActorCriticAgent, train_actor_critic_agent
         agent = ActorCriticAgent(state_dim, action_dim, max_action)
-        train_actor_critic_agent(agent, Q_normal, r_normal, episodes=700)
-        torch.save(agent.actor.state_dict(), "actor_weights.pth")
-        torch.save(agent.critic.state_dict(), "critic_weights.pth")
+
+        # Train on Normal Weather
+        train_actor_critic_agent(agent, [Q_normal], [r_normal], episodes=100)
+        torch.save(agent.actor.state_dict(), "actor_weights_normal.pth")
+        torch.save(agent.critic.state_dict(), "critic_weights_normal.pth")
+
+        # Retrain on Rainy Weather
+        train_actor_critic_agent(agent, [Q_rainy], [r_rainy], episodes=50)
+        torch.save(agent.actor.state_dict(), "actor_weights_rainy.pth")
+        torch.save(agent.critic.state_dict(), "critic_weights_rainy.pth")
+
+        # Retrain on Drought Weather
+        train_actor_critic_agent(agent, [Q_drought], [r_drought], episodes=50)
+        torch.save(agent.actor.state_dict(), "actor_weights_drought.pth")
+        torch.save(agent.critic.state_dict(), "critic_weights_drought.pth")
+
         run_simulation(Q_normal, r_normal, "Normal Weather with RL", use_rl=True, rl_model=agent)
         run_simulation(Q_drought, r_drought, "Drought Weather with RL", use_rl=True, rl_model=agent)
         run_simulation(Q_rainy, r_rainy, "Rainy Weather with RL", use_rl=True, rl_model=agent)

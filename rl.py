@@ -1,10 +1,11 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-from main import q2t, vvdt
+
+from main import q2t, vvdt, checkVolume
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -88,9 +89,13 @@ class ActorCriticAgent:
         self.replay_buffer = ReplayBuffer()
 
     def select_action(self, state):
+        state = self.normalize_state(state)
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         action = self.actor(state).cpu().data.numpy().flatten()
         return np.clip(action, 0, self.max_action)
+
+    def normalize_state(self, state):
+        return (state - np.array([0.5, 0.5, 0])) / np.array([0.5, 0.5, 1])
 
     def train(self, batch_size=100):
         state, next_state, action, reward, done = self.replay_buffer.sample(batch_size)
@@ -129,63 +134,107 @@ class ActorCriticAgent:
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
 
-def train_actor_critic_agent(agent, Qt_func, rt_func, episodes=1000, T=100, dt=0.1):
+def train_actor_critic_agent(agent, Qt_funcs, rt_funcs, episodes=1000, T=100, dt=0.1):
     cumulative_rewards = []
+    fitness_scores = []
     pt = tqdm(range(episodes), unit="episode")
 
     for episode in pt:
-        V = np.array([0.5, 0.5])
+        scenario_index = 0
+        Qt_func = Qt_funcs[scenario_index]
+        rt_func = rt_funcs[scenario_index]
+
+        V = np.array([[0.5], [0.5]])
         minallowed = 0.1
         maxallowed = 0.9
-        target_v1 = 0.5
-        target_v2 = 0.5
         ttt = np.arange(0, T, dt)
         r_values = np.zeros_like(ttt)
         r_values[0] = rt_func(0, 0)
 
         episode_reward = 0
         prev_q1t_value = 0
+        V_prev = V.copy()
+
+        valid_count = 0
+        low_count = 0
+        high_count = 0
+        invalid_count = 0
+        q1_values = []
 
         for i in range(1, np.size(ttt)):
             t = ttt[i]
-            state = np.array([V[0], V[1], r_values[i - 1]])
+            state = np.array([V[0, 0], V[1, 0], r_values[i - 1]])
             action = agent.select_action(state)
             q1t_value = max(0, action[0])
+            q1_values.append(q1t_value)
             rt_value = rt_func(t, r_values[i - 1])
             r_values[i] = rt_value
-            q2t_value = q2t(t, V[1])
+            q2t_value = q2t(t, V[1, 0])
             Qt_value = Qt_func(t)
-            V = V + dt * vvdt(t, q1t_value, rt_value, q2t_value, Qt_value)
+            V = V + dt * vvdt(t, q1t_value, rt_value, q2t_value, Qt_value).reshape(2, 1)
             V = np.clip(V, 0, 1)
 
-            # Calculate reward
-            reward = -abs(V[0] - target_v1) - abs(V[1] - target_v2)
+            # Volume validity check
+            status1 = checkVolume(V[0, 0], minallowed, maxallowed, verbose=False, reservoirName="1st reservoir")
+            status2 = checkVolume(V[1, 0], minallowed, maxallowed, verbose=False, reservoirName="2nd reservoir")
+            for status in [status1, status2]:
+                if status == 1:
+                    valid_count += 1
+                elif status == 0:
+                    low_count += 1
+                elif status == 2:
+                    high_count += 1
+                elif status == -1:
+                    invalid_count += 1
 
-            # Apply penalties based on volume bounds
-            if V[0] < minallowed or V[0] > maxallowed or V[1] < minallowed or V[1] > maxallowed:
-                reward -= 0.5
+            # Reward for keeping both volumes within the allowed range
+            if minallowed <= V[0, 0] <= maxallowed and minallowed <= V[1, 0] <= maxallowed:
+                reward = 10.0
+            else:
+                reward = -5.0
 
             # Penalize large changes in q1
             reward -= 0.1 * abs(q1t_value - prev_q1t_value)
 
+            # Penalize instability in volumes
+            reward -= 0.05 * abs(V[0, 0] - V_prev[0, 0])
+            reward -= 0.05 * abs(V[1, 0] - V_prev[1, 0])
+
             episode_reward += reward
             prev_q1t_value = q1t_value
+            V_prev = V.copy()
 
-            next_state = np.array([V[0], V[1], r_values[i]])
+            next_state = np.array([V[0, 0], V[1, 0], r_values[i]])
             done = 1 if i == np.size(ttt) - 1 else 0
             agent.replay_buffer.add((state, next_state, action, reward, done))
 
             if len(agent.replay_buffer.storage) > 1000:
                 agent.train()
 
+        fitness = (valid_count - (low_count + high_count + invalid_count))
+        fitness_scores.append(fitness)
+
         cumulative_rewards.append(episode_reward)
+        avg_fitness = sum(fitness_scores) / (episode + 1)
         pt.set_description(
-            f"Cumulative reward: {round(sum(cumulative_rewards) / (episode + 1), 2)} | Current reward: {round(episode_reward, 2)}")
+            f"Cumulative reward: {round(sum(cumulative_rewards) / (episode + 1), 2)} | Current reward: {round(episode_reward, 2)} | Avg fitness: {round(avg_fitness, 2)}")
 
     # Plot cumulative reward trend
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 2, 1)
     plt.plot(cumulative_rewards)
     plt.xlabel('Episode')
     plt.ylabel('Cumulative Reward')
     plt.title('Cumulative Reward Trend During Training')
     plt.grid(True)
+
+    # Plot fitness score trend
+    plt.subplot(1, 2, 2)
+    plt.plot(fitness_scores)
+    plt.xlabel('Episode')
+    plt.ylabel('Fitness Score')
+    plt.title('Fitness Score Trend During Training')
+    plt.grid(True)
+
+    plt.tight_layout()
     plt.show()
