@@ -101,10 +101,10 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
     valid_count = 0
 
     if params is not None and not use_rl:
-        kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2 = params
-        pid_controller = PIDController(kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2)
+        kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2, feedforward_gain = params
+        pid_controller = PIDController(kp, ki, kd, setpoint1, setpoint2, weight_v1, weight_v2, feedforward_gain)
     else:
-        pid_controller = PIDController(1.0, 0.1, 0.05, 0.5, 0.5, 0.5, 0.5)
+        pid_controller = PIDController(1.0, 0.1, 0.05, 0.5, 0.5, 0.5, 0.5, 1.0)
 
     for i in range(1, np.size(ttt)):
         t = ttt[i]
@@ -113,7 +113,8 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
             action = rl_model.select_action(state)
             q1t_value = max(0, min(1, action[0]))
         else:
-            q1t_value = pid_controller.compute(V[0, i - 1], V[1, i - 1])
+            feedforward_input = Q_values[i - 1]  # Example feedforward input
+            q1t_value = pid_controller.compute(V[0, i - 1], V[1, i - 1], feedforward_input)
 
         q1_values[i] = q1t_value
         rt_value = rt_func(t, r_values[i - 1])
@@ -137,14 +138,28 @@ def run_simulation(Qt_func, rt_func, scenario_title, params=None, optimize=False
             elif status == -1:
                 invalid_count += 1
 
+    # Calculate stability as the inverse of variance (higher stability => lower variance)
+    stability_q1 = 1 / (np.var(q1_values) + 1e-6)
+    stability_V1 = 1 / (np.var(V[0, :]) + 1e-6)
+    stability_V2 = 1 / (np.var(V[1, :]) + 1e-6)
+
+    # Normalize stability values
+    stability_q1_norm = stability_q1 / np.max([stability_q1, stability_V1, stability_V2])
+    stability_V1_norm = stability_V1 / np.max([stability_q1, stability_V1, stability_V2])
+    stability_V2_norm = stability_V2 / np.max([stability_q1, stability_V1, stability_V2])
+
     if optimize:
-        return valid_count, low_count, high_count, invalid_count
+        return valid_count, low_count, high_count, invalid_count, stability_q1_norm, stability_V1_norm, stability_V2_norm
+
     else:
         print(f"\n{scenario_title} Scenario Results:")
         print(f"Valid volumes: {valid_count}")
         print(f"Close to empty volumes: {low_count}")
         print(f"Close to overflow volumes: {high_count}")
         print(f"Invalid volumes: {invalid_count}")
+        print(f"Stability of q1: {stability_q1:.2f}")
+        print(f"Stability of V1: {stability_V1:.2f}")
+        print(f"Stability of V2: {stability_V2:.2f}")
 
         _, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
@@ -187,11 +202,11 @@ def main():
 
     if mode == "optimize":
         from optimization import genetic_algorithm  # Import here to avoid circular dependency
-        best_params_normal = genetic_algorithm(num_generations=50, population_size=300, scenario="normal")
+        # best_params_drought = genetic_algorithm(num_generations=15, population_size=500, scenario="drought")
+        # np.save("best_params_drought.npy", best_params_drought)
+        best_params_normal = genetic_algorithm(num_generations=50, population_size=1000, scenario="normal")
         np.save("best_params_normal.npy", best_params_normal)
-        best_params_drought = genetic_algorithm(num_generations=50, population_size=300, scenario="drought")
-        np.save("best_params_drought.npy", best_params_drought)
-        best_params_rainy = genetic_algorithm(num_generations=50, population_size=300, scenario="rainy")
+        best_params_rainy = genetic_algorithm(num_generations=50, population_size=1000, scenario="rainy")
         np.save("best_params_rainy.npy", best_params_rainy)
     elif mode == "test":
         test_mode = input("Enter 'pid' for PID controller testing or 'rl' for RL agent testing: ").strip().lower()
